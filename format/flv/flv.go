@@ -231,10 +231,10 @@ func (r *Demuxer) ReadTag() (tag flvio.Tag, err error) {
 	return
 }
 
-func ReadPacket(readTag func() (flvio.Tag, error)) (pkt avformat.Packet, err error) {
+func (r *Demuxer) ReadPacket() (pkt avformat.Packet, err error) {
 	for {
 		var tag flvio.Tag
-		if tag, err = readTag(); err != nil {
+		if tag, err = r.ReadTag(); err != nil {
 			return
 		}
 
@@ -255,6 +255,7 @@ func ReadPacket(readTag func() (flvio.Tag, error)) (pkt avformat.Packet, err err
 			case flvio.VIDEO_H264:
 				switch tag.AVCPacketType {
 				case flvio.AVC_SEQHDR:
+					// header (config) packet
 					pkt = avformat.Packet{
 						Type: h264.Config,
 						Data: tag.Data,
@@ -293,8 +294,4 @@ func ReadPacket(readTag func() (flvio.Tag, error)) (pkt avformat.Packet, err err
 			}
 		}
 	}
-}
-
-func (r *Demuxer) ReadPacket() (pkt avformat.Packet, err error) {
-	return ReadPacket(r.ReadTag)
 }

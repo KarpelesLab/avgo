@@ -188,6 +188,14 @@ type flvStream struct {
 	codec  *avformat.Codec
 }
 
+func (f *flvStream) Config() any {
+	return f.config
+}
+
+func (f *flvStream) Codec() *avformat.Codec {
+	return f.codec
+}
+
 type Demuxer struct {
 	r          io.Reader
 	b          []byte
@@ -295,9 +303,15 @@ func ReadPacket(readTag func() (flvio.Tag, error)) (pkt *avformat.Packet, err er
 			case flvio.SOUND_AAC:
 				switch tag.AACPacketType {
 				case flvio.AAC_SEQHDR:
+					var codec *aac.Codec
+					codec, err = aac.FromMPEG4AudioConfigBytes(tag.Data)
+					if err != nil {
+						return
+					}
 					pkt = &avformat.Packet{
-						Type: aac.Config,
-						Data: tag.Data,
+						Type:   aac.Config,
+						Stream: &flvStream{config: codec, codec: aac.AAC},
+						Data:   tag.Data,
 					}
 					return
 				case flvio.AAC_RAW:

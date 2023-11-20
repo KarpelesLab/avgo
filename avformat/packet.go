@@ -9,6 +9,7 @@ type PacketType struct {
 
 type Packet struct {
 	Type       *PacketType
+	Stream     Stream
 	IsKeyFrame bool
 	CTime      time.Duration
 	Time       time.Duration

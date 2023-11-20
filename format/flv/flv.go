@@ -93,7 +93,8 @@ func (w *Muxer) WriteTag(tag flvio.Tag) (err error) {
 	return flvio.WriteTag(w.W, tag, w.b)
 }
 
-func AACTagFromCodec(aac *aac.Codec) flvio.Tag {
+func AACTagFromCodec(stream avformat.Stream) flvio.Tag {
+	aac := avformat.StreamConfig[aac.Codec](stream)
 	ch := 1
 	if aac != nil {
 		ch = aac.Config.ChannelLayout.Count()
@@ -113,15 +114,18 @@ func AACTagFromCodec(aac *aac.Codec) flvio.Tag {
 	return tag
 }
 
-// func WritePacket(pkt avformat.Packet, writeTag func(flvio.Tag) error, publishing bool) (err error) {
-func (w *Muxer) WritePacket(pkt avformat.Packet) (err error) {
+func (w *Muxer) WritePacket(pkt *avformat.Packet) (err error) {
+	return WritePacket(pkt, w.WriteTag, w.Publishing)
+}
+
+func WritePacket(pkt *avformat.Packet, writeTag func(flvio.Tag) error, publishing bool) (err error) {
 	switch pkt.Type {
 	case aac.Packet:
-		tag := AACTagFromCodec(w.AAC)
+		tag := AACTagFromCodec(pkt.Stream)
 		tag.AACPacketType = flvio.AAC_RAW
 		tag.Time = uint32(flvio.TimeToTs(pkt.Time))
 		tag.Data = pkt.Data
-		return w.WriteTag(tag)
+		return writeTag(tag)
 
 	case h264.Config:
 		tag := flvio.Tag{
@@ -132,7 +136,7 @@ func (w *Muxer) WritePacket(pkt avformat.Packet) (err error) {
 			Data:          pkt.Data,
 			Time:          uint32(flvio.TimeToTs(pkt.Time)),
 		}
-		return w.WriteTag(tag)
+		return writeTag(tag)
 
 	case h264.Packet:
 		tag := flvio.Tag{
@@ -148,13 +152,13 @@ func (w *Muxer) WritePacket(pkt avformat.Packet) (err error) {
 		}
 		tag.Time = uint32(flvio.TimeToTs(pkt.Time))
 		tag.Data = pkt.Data
-		return w.WriteTag(tag)
+		return writeTag(tag)
 
 	case aac.Config:
-		tag := AACTagFromCodec(w.AAC)
+		tag := AACTagFromCodec(pkt.Stream)
 		tag.AACPacketType = flvio.AAC_SEQHDR
 		tag.Data = pkt.Data
-		return w.WriteTag(tag)
+		return writeTag(tag)
 
 	case flvMetadata:
 		arr, perr := flvio.ParseAMFVals(pkt.Data, false)
@@ -162,7 +166,7 @@ func (w *Muxer) WritePacket(pkt avformat.Packet) (err error) {
 			return
 		}
 		narr := []interface{}{}
-		if w.Publishing {
+		if publishing {
 			narr = append(narr, SetDataFrame)
 		}
 		narr = append(narr, OnMetaData)
@@ -173,10 +177,15 @@ func (w *Muxer) WritePacket(pkt avformat.Packet) (err error) {
 			Data: tagdata,
 			Time: uint32(flvio.TimeToTs(pkt.Time)),
 		}
-		return w.WriteTag(tag)
+		return writeTag(tag)
 	}
 
 	return
+}
+
+type flvStream struct {
+	config any
+	codec  *avformat.Codec
 }
 
 type Demuxer struct {
@@ -184,14 +193,16 @@ type Demuxer struct {
 	b          []byte
 	gotfilehdr bool
 	Malloc     func(int) ([]byte, error)
+	streams    []*flvStream
 
 	LogHeaderEvent func(flags uint8)
 }
 
 func NewDemuxer(r io.Reader) *Demuxer {
 	d := &Demuxer{
-		r: r,
-		b: make([]byte, 256),
+		r:       r,
+		b:       make([]byte, 256),
+		streams: make([]*flvStream, 2),
 		Malloc: func(n int) ([]byte, error) {
 			return make([]byte, n), nil
 		},
@@ -231,18 +242,24 @@ func (r *Demuxer) ReadTag() (tag flvio.Tag, err error) {
 	return
 }
 
-func (r *Demuxer) ReadPacket() (pkt avformat.Packet, err error) {
+func (r *Demuxer) ReadPacket() (pkt *avformat.Packet, err error) {
+	return ReadPacket(r.ReadTag)
+}
+
+func ReadPacket(readTag func() (flvio.Tag, error)) (pkt *avformat.Packet, err error) {
 	for {
 		var tag flvio.Tag
-		if tag, err = r.ReadTag(); err != nil {
+		if tag, err = readTag(); err != nil {
 			return
 		}
+
+		// TODO fill Packet.Stream
 
 		switch tag.Type {
 		case flvio.TAG_AMF0, flvio.TAG_AMF3:
 			data := convertToAMF0Metadata(tag.Data, tag.Type == flvio.TAG_AMF3)
 			if data != nil {
-				pkt = avformat.Packet{
+				pkt = &avformat.Packet{
 					Type: flvMetadata,
 					Data: data,
 					Time: flvio.TsToTime(int64(tag.Time)),
@@ -256,13 +273,13 @@ func (r *Demuxer) ReadPacket() (pkt avformat.Packet, err error) {
 				switch tag.AVCPacketType {
 				case flvio.AVC_SEQHDR:
 					// header (config) packet
-					pkt = avformat.Packet{
+					pkt = &avformat.Packet{
 						Type: h264.Config,
 						Data: tag.Data,
 					}
 					return
 				case flvio.AVC_NALU:
-					pkt = avformat.Packet{
+					pkt = &avformat.Packet{
 						Type:       h264.Packet,
 						Data:       tag.Data,
 						Time:       flvio.TsToTime(int64(tag.Time)),
@@ -278,13 +295,13 @@ func (r *Demuxer) ReadPacket() (pkt avformat.Packet, err error) {
 			case flvio.SOUND_AAC:
 				switch tag.AACPacketType {
 				case flvio.AAC_SEQHDR:
-					pkt = avformat.Packet{
+					pkt = &avformat.Packet{
 						Type: aac.Config,
 						Data: tag.Data,
 					}
 					return
 				case flvio.AAC_RAW:
-					pkt = avformat.Packet{
+					pkt = &avformat.Packet{
 						Type: aac.Packet,
 						Data: tag.Data,
 						Time: flvio.TsToTime(int64(tag.Time)),

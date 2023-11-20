@@ -18,6 +18,3 @@ type FileInfo interface {
 	Duration() time.Duration
 	Streams() []Stream
 }
-
-type Stream interface {
-}

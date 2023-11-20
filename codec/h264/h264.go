@@ -14,7 +14,9 @@ import (
 
 var (
 	H264 = &avformat.Codec{
-		Name: "H264",
+		Name:   "H264",
+		Type:   avformat.VideoCodec,
+		FourCC: []string{"AVC1", "DAVC", "H264", "X264", "VSSH"},
 	}
 
 	Packet = &avformat.PacketType{
@@ -480,6 +482,7 @@ func Map2arr(m map[int][]byte) (a [][]byte) {
 	return
 }
 
+// Codec contains the configuration for a given H264 stream
 type Codec struct {
 	ConfigBytes []byte
 	SPS, PPS    map[int][]byte

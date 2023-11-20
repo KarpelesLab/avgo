@@ -12,7 +12,9 @@ import (
 
 var (
 	AAC = &avformat.Codec{
-		Name: "AAC",
+		Name:   "AAC",
+		Type:   avformat.AudioCodec,
+		FourCC: []string{"AAC", "AACP", "MP4A", "mp4a", "VLB"},
 	}
 
 	Packet = &avformat.PacketType{
